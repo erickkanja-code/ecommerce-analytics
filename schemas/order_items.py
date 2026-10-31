@@ -1,5 +1,5 @@
-"
-CREATE TABLE order_items (
+CREATE_ORDER_ITEMS_TABLE ="""
+CREATE TABLE IF NOT EXISTS order_items (
     item_id INT GENERATE ALWAYS AS IDENTITY PRIMARY KEY,
     order_id INT NOT NULL,
     product_id INT NOT NULL,
@@ -10,4 +10,4 @@ CREATE TABLE order_items (
 
     CONSTRAINT check_quantiy_is_valid CHECK (quantiy > 0)
 );
-"
+"""

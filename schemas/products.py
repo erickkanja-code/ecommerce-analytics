@@ -1,5 +1,5 @@
-"
-CREATE TABLE products (
+CREATE_PRODUCTS_TABLE ="""
+CREATE TABLE IF NOT EXISTS products (
     product_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     product_name VARCHAR(255) NOT NULL,
     selling_price NUMERIC(10,2) NOT NULL,
@@ -11,4 +11,4 @@ CREATE TABLE products (
     CONSTRAINT check_buyingprice_is_valid CHECK (buying_price > 0)
 
 );
-"
+"""
