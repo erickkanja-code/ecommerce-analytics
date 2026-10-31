@@ -7,5 +7,7 @@ CREATE TABLE order_items (
     unit_price NUMERIC(10,2)
     FOREIGN KEY order_id REFERENCES orders(order_id)
     FOREIGN KEY product_id REFERENCES products(product_id)
+
+    CONSTRAINT check_quantiy_is_valid CHECK (quantiy > 0)
 );
 "
