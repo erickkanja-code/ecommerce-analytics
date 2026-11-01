@@ -5,7 +5,8 @@ from products import (
     read_products,
     update_product,
     delete_product,
-    generate_product_ranking
+    generate_product_ranking,
+    search_products_by_brand
 )
 from connection import (
     get_connection,
@@ -56,6 +57,8 @@ try:
                 break
             elif choice == "10":
                 generate_customer_revenue(cursor)
+            elif choice == "11":
+                search_products_by_brand(cursor)
             else:
                 print("Invalid option. Try again.")
 

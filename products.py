@@ -1,8 +1,8 @@
 
 import psycopg2
 from schemas.products import CREATE_PRODUCTS_TABLE
-import math
-
+import json
+from redis_connection import redis_client
 
 def create_product(cursor):
     try:
@@ -136,30 +136,63 @@ def delete_product(cursor):
         print(e)
 
 
+
 def generate_product_ranking(cursor):
-    query = """
-        SELECT
-            product_id,
-            SUM(quantity) AS total_sold,
-            RANK() OVER (
-                ORDER BY SUM(quantity) DESC
-            ) AS product_rank
-        FROM order_items
-        GROUP BY product_id
-    """
+    # 1. Check whether the results are already cached in Redis
+    cached_products = redis_client.get("top_products")
 
-    try:
-        cursor.execute(query)
-        rankings = cursor.fetchall()
+    if cached_products:
+        print("\nRetrieved top products from Redis (cache hit).")
+        rankings = json.loads(cached_products)
 
-        print("\n---------- PRODUCT RANKING ----------")
+    else:
+        print("\nRetrieving top products from PostgreSQL (cache miss).")
 
-        for product in rankings:
-            print(
-                f"Rank: {product[2]} | "
-                f"Product ID: {product[0]} | "
-                f"Units Sold: {product[1]}"
+        # 2. Retrieve the top 10 products from PostgreSQL
+        query = """
+            SELECT
+                product_id,
+                SUM(quantity) AS total_sold,
+                RANK() OVER (
+                    ORDER BY SUM(quantity) DESC
+                ) AS product_rank
+            FROM order_items
+            GROUP BY product_id
+            ORDER BY total_sold DESC
+            LIMIT 10
+        """
+
+        try:
+            cursor.execute(query)
+            results = cursor.fetchall()
+
+            # 3. Convert database results into JSON-serializable dictionaries
+            rankings = [
+                {
+                    "product_id": int(product[0]),
+                    "total_sold": int(product[1]),
+                    "product_rank": int(product[2])
+                }
+                for product in results
+            ]
+
+            # 4. Store results in Redis for 5 minutes
+            redis_client.setex(
+                "top_products",
+                300,
+                json.dumps(rankings)
             )
 
-    except psycopg2.Error as e:
-        print(f"Could not generate product ranking: {e}")
+        except psycopg2.Error as e:
+            print(f"Could not generate product ranking: {e}")
+            return
+
+    # 5. Display results
+    print("\n---------- TOP 10 PRODUCTS ----------")
+
+    for product in rankings:
+        print(
+            f"Rank: {product['product_rank']} | "
+            f"Product ID: {product['product_id']} | "
+            f"Units Sold: {product['total_sold']}"
+        )
