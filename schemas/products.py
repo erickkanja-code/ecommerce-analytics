@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS products (
     product_name VARCHAR(255) NOT NULL,
     selling_price NUMERIC(10,2) NOT NULL,
     buying_price NUMERIC(10,2) NOT NULL,
-    details JSONB
+    details JSONB,
 
     CONSTRAINT check_productname_is_not_empty CHECK (TRIM(product_name) <> ''), 
     CONSTRAINT check_sellingprice_is_valid CHECK (selling_price > 0), 

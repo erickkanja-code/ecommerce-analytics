@@ -25,3 +25,4 @@ def read_customers(cursor):
         print(customers)
     except psycopg2.Error as e:
         print(e)
+        

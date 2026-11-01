@@ -15,7 +15,7 @@ except psycopg2.OperationalError as e:
 def get_connection():
     return postgreSQL_pool.getconn()
 
-def return_connetcion_to_pool(connection):
+def return_connection_to_pool(connection):
     return postgreSQL_pool.putconn(connection)
 
 def close_pool():
