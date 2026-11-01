@@ -1,18 +1,47 @@
+"""Handle product operations and product analytics."""
+
+import json
 
 import psycopg2
-from schemas.products import CREATE_PRODUCTS_TABLE
-import json
+import redis
+
 from redis_connection import redis_client
+from schemas.products import CREATE_PRODUCTS_TABLE
+
 
 def create_product(cursor):
+    """Create a product after validating its details."""
+
+    # Ensure the products table exists.
     try:
         cursor.execute(CREATE_PRODUCTS_TABLE)
-    except psycopg2.Error as e:
-        print(f"{e}")
+    except psycopg2.Error as error:
+        cursor.connection.rollback()
+        print(f"Could not prepare products table: {error}")
+        return
 
-    product_name = input("Enter the product's name:")
-    selling_price = round(float(input("Enter the selling price:")), 2)
-    buying_price = round(float(input("Enter the buying price:")), 2)
+    product_name = input("Enter the product's name: ").strip()
+
+    if not product_name:
+        print("Product name cannot be empty.")
+        return
+
+    # Validate that both prices are valid positive numbers.
+    try:
+        selling_price = round(
+            float(input("Enter the selling price: ")), 2
+        )
+        buying_price = round(
+            float(input("Enter the buying price: ")), 2
+        )
+
+        if selling_price <= 0 or buying_price <= 0:
+            print("Prices must be greater than zero.")
+            return
+
+    except ValueError:
+        print("Please enter valid numbers for the prices.")
+        return
 
     query = """
         INSERT INTO products (product_name, selling_price, buying_price)
@@ -20,37 +49,64 @@ def create_product(cursor):
     """
 
     try:
-        cursor.execute(query, (product_name, selling_price, buying_price))
+        cursor.execute(
+            query,
+            (product_name, selling_price, buying_price),
+        )
         cursor.connection.commit()
-        print("Product created successfully")
-    except psycopg2.Error as e:
-        print(f"Product creation failed: {e}")
+        print("Product created successfully.")
+
+    except psycopg2.Error as error:
+        cursor.connection.rollback()
+        print(f"Product creation failed: {error}")
 
 
 def read_products(cursor):
-    query = "SELECT * FROM products"
+    """Retrieve and display all products."""
+
+    query = """
+        SELECT product_id, product_name, selling_price, details
+        FROM products
+        ORDER BY product_id
+    """
 
     try:
         cursor.execute(query)
         products = cursor.fetchall()
 
+        if not products:
+            print("No products found.")
+            return
+
+        print("\n---------- PRODUCTS ----------")
+
         for product in products:
             print(
-                f"\n{product[0]}: {product[1]} "
-                f"| Selling Price: {product[2]}"
+                f"\nID: {product[0]} | "
+                f"Name: {product[1]} | "
+                f"Selling Price: {product[2]}"
             )
 
-            if product[5]:
+            # PostgreSQL JSONB data is returned as a Python dictionary.
+            if product[3]:
                 print("Product Details:")
-                for key, value in product[5].items():
+
+                for key, value in product[3].items():
                     print(f"  {key}: {value}")
 
-    except psycopg2.Error as e:
-        print(e)
+    except psycopg2.Error as error:
+        cursor.connection.rollback()
+        print(f"Could not retrieve products: {error}")
 
 
 def search_products_by_brand(cursor):
-    brand = input("Enter brand: ")
+    """Find products using the brand stored in their JSONB details."""
+
+    brand = input("Enter brand: ").strip()
+
+    if not brand:
+        print("Brand cannot be empty.")
+        return
 
     query = """
         SELECT product_id, product_name, details ->> 'brand'
@@ -67,6 +123,7 @@ def search_products_by_brand(cursor):
             return
 
         print("\n---------- SEARCH RESULTS ----------")
+
         for product in products:
             print(
                 f"ID: {product[0]} | "
@@ -74,53 +131,70 @@ def search_products_by_brand(cursor):
                 f"Brand: {product[2]}"
             )
 
-    except psycopg2.Error as e:
-        print(f"Product search failed: {e}")
+    except psycopg2.Error as error:
+        cursor.connection.rollback()
+        print(f"Product search failed: {error}")
 
 
 def update_product(cursor):
+    """Update the selling price of an existing product."""
+
     read_products(cursor)
 
-    product_id = int(
-        input("Select one of the products above. Enter a number 1, 2 or 3 etc...")
-    )
+    try:
+        product_id = int(input("Enter the product ID to update: "))
+        new_selling_price = round(
+            float(input("Enter the new selling price: ")), 2
+        )
 
-    new_selling_price = round(
-        float(input("Enter the new selling price for this product")), 2
-    )
+        if product_id <= 0:
+            print("Product ID must be greater than zero.")
+            return
 
-    update_selling_price_query = """
+        if new_selling_price <= 0:
+            print("Selling price must be greater than zero.")
+            return
+
+    except ValueError:
+        print("Please enter a valid product ID and price.")
+        return
+
+    query = """
         UPDATE products
         SET selling_price = %s
         WHERE product_id = %s
     """
 
     try:
-        cursor.execute(
-            update_selling_price_query,
-            (new_selling_price, product_id)
-        )
+        cursor.execute(query, (new_selling_price, product_id))
 
-        print("Product updated successfully")
+        if cursor.rowcount == 0:
+            print("Product not found.")
+            return
 
-        cursor.execute(
-            "SELECT * FROM products WHERE product_id = %s",
-            (product_id,)
-        )
-
-        print(cursor.fetchall())
         cursor.connection.commit()
+        print("Product updated successfully.")
 
-    except psycopg2.Error as e:
-        print(e)
+    except psycopg2.Error as error:
+        cursor.connection.rollback()
+        print(f"Product update failed: {error}")
 
 
 def delete_product(cursor):
+    """Delete a product using its ID."""
+
     read_products(cursor)
 
-    product_id = int(
-        input("Select one of the products above. Enter a number 1, 2 or 3 etc...")
-    )
+    try:
+        product_id = int(input("Enter the product ID to delete: "))
+
+        if product_id <= 0:
+            print("Product ID must be greater than zero.")
+            return
+
+    except ValueError:
+        print("Please enter a valid product ID.")
+        return
 
     query = """
         DELETE FROM products
@@ -129,26 +203,48 @@ def delete_product(cursor):
 
     try:
         cursor.execute(query, (product_id,))
+
+        if cursor.rowcount == 0:
+            print("Product not found.")
+            return
+
         cursor.connection.commit()
-        print("Product deleted successfully")
+        print("Product deleted successfully.")
 
-    except psycopg2.Error as e:
-        print(e)
-
+    except psycopg2.Error as error:
+        cursor.connection.rollback()
+        print(f"Product deletion failed: {error}")
 
 
 def generate_product_ranking(cursor):
-    # 1. Check whether the results are already cached in Redis
-    cached_products = redis_client.get("top_products")
+    """Retrieve the top-selling products using Redis caching."""
+
+    cache_key = "top_products"
+
+    # First, try to retrieve the ranking from Redis.
+    try:
+        cached_products = redis_client.get(cache_key)
+
+    except redis.RedisError as error:
+        print(f"Redis unavailable. Retrieving from PostgreSQL: {error}")
+        cached_products = None
 
     if cached_products:
-        print("\nRetrieved top products from Redis (cache hit).")
-        rankings = json.loads(cached_products)
+        try:
+            rankings = json.loads(cached_products)
+            print("\nRetrieved top products from Redis (cache hit).")
+
+        except json.JSONDecodeError:
+            print("\nInvalid cached data. Retrieving from PostgreSQL.")
+            rankings = None
 
     else:
+        rankings = None
+
+    # If the cache is empty or unavailable, query PostgreSQL.
+    if rankings is None:
         print("\nRetrieving top products from PostgreSQL (cache miss).")
 
-        # 2. Retrieve the top 10 products from PostgreSQL
         query = """
             SELECT
                 product_id,
@@ -166,29 +262,37 @@ def generate_product_ranking(cursor):
             cursor.execute(query)
             results = cursor.fetchall()
 
-            # 3. Convert database results into JSON-serializable dictionaries
+            # Convert query results into JSON-serializable dictionaries.
             rankings = [
                 {
                     "product_id": int(product[0]),
                     "total_sold": int(product[1]),
-                    "product_rank": int(product[2])
+                    "product_rank": int(product[2]),
                 }
                 for product in results
             ]
 
-            # 4. Store results in Redis for 5 minutes
-            redis_client.setex(
-                "top_products",
-                300,
-                json.dumps(rankings)
-            )
-
-        except psycopg2.Error as e:
-            print(f"Could not generate product ranking: {e}")
+        except psycopg2.Error as error:
+            cursor.connection.rollback()
+            print(f"Could not generate product ranking: {error}")
             return
 
-    # 5. Display results
+        # Cache the results for five minutes.
+        try:
+            redis_client.setex(
+                cache_key,
+                300,
+                json.dumps(rankings),
+            )
+        except redis.RedisError as error:
+            print(f"Could not cache product ranking: {error}")
+
+    # Display the ranking regardless of whether it came from Redis or PostgreSQL.
     print("\n---------- TOP 10 PRODUCTS ----------")
+
+    if not rankings:
+        print("No product sales found.")
+        return
 
     for product in rankings:
         print(

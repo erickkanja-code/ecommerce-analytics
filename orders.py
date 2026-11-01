@@ -1,58 +1,85 @@
+"""Handle customer orders and customer revenue reports."""
+
+import psycopg2
 
 from products import read_products
-import psycopg2
 from schemas.orders import CREATE_ORDERS_TABLE
 from schemas.order_items import CREATE_ORDER_ITEMS_TABLE
 
-def make_order(cursor):
-    cursor.execute(CREATE_ORDERS_TABLE)
-    cursor.execute(CREATE_ORDER_ITEMS_TABLE)
-    
-    order_items = {}
-    order_status = "ongoing"
+
+def make_order(cursor, customer_id):
+    """Create an order and its associated order items for a customer."""
+
     connection = cursor.connection
 
     try:
+        # Ensure the required tables exist.
+        cursor.execute(CREATE_ORDERS_TABLE)
+        cursor.execute(CREATE_ORDER_ITEMS_TABLE)
+
+        order_items = {}
+        order_status = "ongoing"
+
+        # Collect products and quantities for the order.
         while order_status == "ongoing":
             read_products(cursor)
 
-            selected_product_id = int(
-                input("Select a product ID (0 to finish): ")
-            )
+            try:
+                selected_product_id = int(
+                    input("Select a product ID (0 to finish): ")
+                )
 
-            if selected_product_id == 0:
-                order_status = "complete"
-            else:
+                if selected_product_id < 0:
+                    print("Product ID cannot be negative.")
+                    continue
+
+                if selected_product_id == 0:
+                    order_status = "complete"
+                    continue
+
                 quantity = int(input("Quantity: "))
+
+                if quantity <= 0:
+                    print("Quantity must be greater than zero.")
+                    continue
+
                 order_items[selected_product_id] = quantity
+
+            except ValueError:
+                print("Please enter valid whole numbers.")
 
         if not order_items:
             print("Your cart is empty.")
             return
 
+        # Create the main order and retrieve its generated ID.
         create_order_query = """
             INSERT INTO orders (customer_id)
             VALUES (%s)
             RETURNING order_id
         """
 
-        cursor.execute(create_order_query, (1,))
+        cursor.execute(create_order_query, (customer_id,))
         order_id = cursor.fetchone()[0]
 
-        print("Order created.")
+        print(f"Order {order_id} created.")
 
-        for item in order_items:
+        # Insert each product into the order_items table.
+        for product_id, quantity in order_items.items():
+
             get_unit_price_query = """
                 SELECT selling_price
                 FROM products
                 WHERE product_id = %s
             """
 
-            cursor.execute(get_unit_price_query, (item,))
+            cursor.execute(get_unit_price_query, (product_id,))
             result = cursor.fetchone()
 
             if result is None:
-                raise ValueError(f"Product {item} does not exist.")
+                raise ValueError(
+                    f"Product with ID {product_id} does not exist."
+                )
 
             unit_price = result[0]
 
@@ -64,8 +91,10 @@ def make_order(cursor):
 
             cursor.execute(
                 create_order_item_query,
-                (order_id, item, order_items[item], unit_price)
+                (order_id, product_id, quantity, unit_price),
             )
+
+        # Calculate the total using the saved order items.
         update_order_total_query = """
             UPDATE orders
             SET total = (
@@ -75,33 +104,51 @@ def make_order(cursor):
             )
             WHERE order_id = %s
         """
-        
+
         cursor.execute(
-                        update_order_total_query,
-                        (order_id, order_id)
+            update_order_total_query,
+            (order_id, order_id),
         )
+
+        # Commit only after the entire order has been processed.
         connection.commit()
         print("Order completed successfully!")
 
-    except (psycopg2.Error, ValueError) as e:
+    except (psycopg2.Error, ValueError) as error:
         connection.rollback()
-        print(f"Order creation failed: {e}")
+        print(f"Order creation failed: {error}")
+
 
 def read_orders(cursor):
-    read_orders_query = """
-        SELECT * 
+    """Retrieve and display all orders."""
+
+    query = """
+        SELECT *
         FROM orders
+        ORDER BY order_id
     """
-    
+
     try:
-        print("----------ORDERS---------")
-        cursor.execute(read_orders_query)
-        print(cursor.fetchall())
-    except psycopg2.Error as e:
-        print(e)        
-    
+        cursor.execute(query)
+        orders = cursor.fetchall()
+
+        print("\n---------- ORDERS ----------")
+
+        if not orders:
+            print("No orders found.")
+            return
+
+        for order in orders:
+            print(order)
+
+    except psycopg2.Error as error:
+        cursor.connection.rollback()
+        print(f"Could not retrieve orders: {error}")
+
 
 def generate_customer_revenue(cursor):
+    """Calculate and display total revenue generated by each customer."""
+
     query = """
         WITH customer_revenue AS (
             SELECT
@@ -110,7 +157,6 @@ def generate_customer_revenue(cursor):
             FROM orders
             GROUP BY customer_id
         )
-
         SELECT *
         FROM customer_revenue
         ORDER BY total_revenue DESC;
@@ -122,11 +168,16 @@ def generate_customer_revenue(cursor):
 
         print("\n---------- CUSTOMER REVENUE ----------")
 
+        if not revenue:
+            print("No customer revenue data available.")
+            return
+
         for customer in revenue:
             print(
                 f"Customer ID: {customer[0]} | "
                 f"Total Revenue: {customer[1]}"
             )
 
-    except psycopg2.Error as e:
-        print(f"Could not generate customer revenue: {e}")
+    except psycopg2.Error as error:
+        cursor.connection.rollback()
+        print(f"Could not generate customer revenue: {error}")
